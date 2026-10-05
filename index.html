@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Flappy Bird 網頁版 (含音效)</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        body {
+            background: #111;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        #game-container {
+            position: relative;
+            width: 400px;
+            height: 600px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            background: linear-gradient(to bottom, #70c5ce, #bee7e9);
+        }
+        .ui-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            transition: opacity 0.3s ease;
+            z-index: 10;
+        }
+        .ui-screen.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.6);
+            letter-spacing: 2px;
+            color: #f7d138;
+        }
+        .score-info {
+            font-size: 1.2rem;
+            margin-bottom: 30px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
+        }
+        button {
+            padding: 12px 35px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #fff;
+            background: linear-gradient(135deg, #ff7e5f, #feb47b);
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(255, 126, 95, 0.4);
+            transition: transform 0.1s, box-shadow 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 126, 95, 0.6);
+        }
+        button:active {
+            transform: translateY(1px);
+        }
+        #score-display {
+            position: absolute;
+            top: 20px;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            font-size: 3rem;
+            font-weight: 900;
+            color: #fff;
+            text-shadow: 3px 3px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+            z-index: 5;
+            pointer-events: none;
+        }
+        #mute-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 15;
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(4px);
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            font-size: 1.2rem;
+            box-shadow: none;
+            padding: 0;
+        }
+        #mute-btn:hover {
+            background: rgba(255, 255, 255, 0.4);
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="score-display">0</div>
+        <button id="mute-btn" title="切換音效">🔊</button>
+
+        <!-- 開始畫面 -->
+        <div id="start-screen" class="ui-screen">
+            <h1>FLAPPY BIRD</h1>
+            <div class="score-info">最高紀錄: <span id="best-score-start">0</span></div>
+            <button id="start-btn">開始遊戲</button>
+        </div>
+
+        <!-- 結束畫面 -->
+        <div id="end-screen" class="ui-screen hidden">
+            <h1>遊戲結束</h1>
+            <div class="score-info" style="margin-bottom: 10px;">本次得分: <span id="final-score">0</span></div>
+            <div class="score-info">最高紀錄: <span id="best-score-end">0</span></div>
+            <button id="restart-btn">重新開始</button>
+        </div>
+
+        <canvas id="gameCanvas" width="400" height="600"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        const startScreen = document.getElementById('start-screen');
+        const endScreen = document.getElementById('end-screen');
+        const startBtn = document.getElementById('start-btn');
+        const restartBtn = document.getElementById('restart-btn');
+        const muteBtn = document.getElementById('mute-btn');
+        const scoreDisplay = document.getElementById('score-display');
+        const bestScoreStart = document.getElementById('best-score-start');
+        const bestScoreEnd = document.getElementById('best-score-end');
+        const finalScoreDisplay = document.getElementById('final-score');
+
+        // 遊戲狀態趨動
+        let gameState = 'START'; // START, PLAYING, GAMEOVER
+        let score = 0;
+        let highScore = localStorage.getItem('flappy_highscore') || 0;
+        let isMuted = false;
+
+        bestScoreStart.textContent = highScore;
+
+        // --- Web Audio API 音效生成器 ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playSound(type) {
+            if (isMuted) return;
+            
+            // 確保 AudioContext 在使用者點擊後是啟動狀態
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+
+            if (type === 'jump') {
+                // 拍打翅膀：頻率快速由低往高升
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(400, now);
+                osc.frequency.exponentialRampToValueAtTime(800, now + 0.1);
+                gainNode.gain.setValueAtTime(0.3, now);
+                gainNode.gain.linearRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now);
+                osc.stop(now + 0.1);
+            } else if (type === 'score') {
+                // 得分：經典叮咚雙音
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(587.33, now); // D5
+                osc.frequency.setValueAtTime(880, now + 0.08); // A5
+                gainNode.gain.setValueAtTime(0.2, now);
+                gainNode.gain.linearRampToValueAtTime(0.2, now + 0.08);
+                gainNode.gain.linearRampToValueAtTime(0.01, now + 0.25);
+                osc.start(now);
+                osc.stop(now + 0.25);
+            } else if (type === 'hit') {
+                // 撞擊：低沉急速下降音
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(220, now);
+                osc.frequency.linearRampToValueAtTime(40, now + 0.2);
+                gainNode.gain.setValueAtTime(0.4, now);
+                gainNode.gain.linearRampToValueAtTime(0.01, now + 0.2);
+                osc.start(now);
+                osc.stop(now + 0.2);
+            }
+        }
+
+        // 切換靜音
+        muteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            isMuted = !isMuted;
+            muteBtn.textContent = isMuted ? '🔇' : '🔊';
+        });
+
+        // 遊戲物件參數
+        const bird = {
+            x: 80,
+            y: 300,
+            radius: 14,
+            velocity: 0,
+            gravity: 0.35,
+            jump: -6.8,
+            rotation: 0,
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                
+                // 鳥身體 (黃色漸層)
+                let gradient = ctx.createRadialGradient(-3, -3, 2, 0, 0, this.radius);
+                gradient.addColorStop(0, '#fff475');
+                gradient.addColorStop(1, '#e5b700');
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#333';
+                ctx.stroke();
+
+                // 眼睛
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(5, -4, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(6, -4, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 嘴巴 (橘色)
+                ctx.fillStyle = '#ff7e5f';
+                ctx.beginPath();
+                ctx.moveTo(12, -2);
+                ctx.lineTo(20, 2);
+                ctx.lineTo(11, 6);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                // 翅膀
+                ctx.fillStyle = '#fafafa';
+                ctx.beginPath();
+                ctx.arc(-7, 2, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.restore();
+            },
+            update() {
+                this.velocity += this.gravity;
+                this.y += this.velocity;
+
+                // 根據速度計算旋轉角度
+                this.rotation = Math.min(Math.PI / 4, Math.max(-Math.PI / 7, this.velocity * 0.06));
+
+                // 觸底判定
+                if (this.y + this.radius >= canvas.height - 40) {
+                    this.y = canvas.height - 40 - this.radius;
+                    gameOver();
+                }
+                // 天花板限制
+                if (this.y - this.radius <= 0) {
+                    this.y = this.radius;
+                    this.velocity = 0;
+                }
+            },
+            flap() {
+                if (gameState !== 'PLAYING') return;
+                this.velocity = this.jump;
+                playSound('jump');
+            }
+        };
+
+        // 水管參數
+        const pipes = {
+            position: [],
+            gap: 130,       // 通過空隙大小
+            width: 65,      // 水管寬度
+            speed: 2.2,     // 移動速度
+            spawnRate: 110, // 每隔多少幀生成一組水管
+            timer: 0,
+            
+            update() {
+                this.timer++;
+                if (this.timer % this.spawnRate === 0) {
+                    // 隨機計算上方水管高度
+                    const minHeight = 50;
+                    const maxHeight = canvas.height - this.gap - 90;
+                    const topHeight = Math.floor(Math.random() * (maxHeight - minHeight + 1)) + minHeight;
+                    
+                    this.position.push({
+                        x: canvas.width,
+                        top: topHeight,
+                        passed: false
+                    });
+                }
+
+                for (let i = this.position.length - 1; i >= 0; i--) {
+                    let p = this.position[i];
+                    p.x -= this.speed;
+
+                    // 碰撞偵測
+                    if (
+                        bird.x + bird.radius > p.x && 
+                        bird.x - bird.radius < p.x + this.width
+                    ) {
+                        // 上水管或下水管碰撞
+                        if (bird.y - bird.radius < p.top || bird.y + bird.radius > p.top + this.gap) {
+                            gameOver();
+                        }
+                    }
+
+                    // 得分判定
+                    if (!p.passed && p.x + this.width / 2 < bird.x) {
+                        p.passed = true;
+                        score++;
+                        scoreDisplay.textContent = score;
+                        playSound('score');
+                    }
+
+                    // 移出畫面則刪除
+                    if (p.x + this.width < 0) {
+                        this.position.splice(i, 1);
+                    }
+                }
+            },
+            draw() {
+                for (let p of this.position) {
+                    // 綠色水管漸層設定
+                    let pipeGrad = ctx.createLinearGradient(p.x, 0, p.x + this.width, 0);
+                    pipeGrad.addColorStop(0, '#73c83e');
+                    pipeGrad.addColorStop(0.3, '#9fe855');
+                    pipeGrad.addColorStop(0.7, '#5ba829');
+                    pipeGrad.addColorStop(1, '#387014');
+
+                    ctx.fillStyle = pipeGrad;
+                    ctx.strokeStyle = '#224009';
+                    ctx.lineWidth = 2.5;
+
+                    // 上半部水管
+                    ctx.fillRect(p.x, 0, this.width, p.top);
+                    ctx.strokeRect(p.x, -2, this.width, p.top + 2);
+                    // 上水管管口邊緣
+                    ctx.fillRect(p.x - 3, p.top - 20, this.width + 6, 20);
+                    ctx.strokeRect(p.x - 3, p.top - 20, this.width + 6, 20);
+
+                    // 下半部水管
+                    const bottomY = p.top + this.gap;
+                    const bottomHeight = canvas.height - bottomY;
+                    ctx.fillRect(p.x, bottomY, this.width, bottomHeight);
+                    ctx.strokeRect(p.x, bottomY, this.width, bottomHeight + 2);
+                    // 下水管管口邊緣
+                    ctx.fillRect(p.x - 3, bottomY, this.width + 6, 20);
+                    ctx.strokeRect(p.x - 3, bottomY, this.width + 6, 20);
+                }
+            },
+            reset() {
+                this.position = [];
+                this.timer = 0;
+            }
+        };
+
+        // 地面草地景物
+        const ground = {
+            height: 40,
+            draw() {
+                // 深色土壤
+                ctx.fillStyle = '#d4a373';
+                ctx.fillRect(0, canvas.height - this.height, canvas.width, this.height);
+                
+                // 上層綠草
+                ctx.fillStyle = '#40916c';
+                ctx.fillRect(0, canvas.height - this.height, canvas.width, 10);
+                
+                // 分隔線
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, canvas.height - this.height);
+                ctx.lineTo(canvas.width, canvas.height - this.height);
+                ctx.stroke();
+            }
+        };
+
+        // 背景雲朵模擬
+        const bgClouds = {
+            clouds: [
+                {x: 40, y: 100, r: 30}, {x: 180, y: 150, r: 45}, {x: 320, y: 80, r: 25}
+            ],
+            draw() {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                for(let c of this.clouds) {
+                    ctx.beginPath();
+                    ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+                    ctx.arc(c.x + c.r*0.6, c.y - c.r*0.2, c.r * 0.8, 0, Math.PI * 2);
+                    ctx.arc(c.x - c.r*0.6, c.y - c.r*0.1, c.r * 0.7, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // 緩慢移動
+                    if (gameState === 'PLAYING') {
+                        c.x -= 0.3;
+                        if (c.x + c.r * 2 < 0) c.x = canvas.width + c.r * 2;
+                    }
+                }
+            }
+        };
+
+        // 核心遊戲迴圈
+        function loop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 繪製背景元素
+            bgClouds.draw();
+
+            if (gameState === 'PLAYING') {
+                bird.update();
+                pipes.update();
+            }
+
+            // 繪製動態主體
+            pipes.draw();
+            ground.draw();
+            bird.draw();
+
+            if (gameState === 'PLAYING') {
+                requestAnimationFrame(loop);
+            }
+        }
+
+        function startGame() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            
+            gameState = 'PLAYING';
+            score = 0;
+            scoreDisplay.textContent = score;
+            
+            bird.y = 300;
+            bird.velocity = 0;
+            
+            pipes.reset();
+            
+            startScreen.classList.add('hidden');
+            endScreen.classList.add('hidden');
+            
+            loop();
+        }
+
+        function gameOver() {
+            gameState = 'GAMEOVER';
+            playSound('hit');
+
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('flappy_highscore', highScore);
+            }
+
+            finalScoreDisplay.textContent = score;
+            bestScoreEnd.textContent = highScore;
+            endScreen.classList.remove('hidden');
+        }
+
+        // --- 事件監聽控制 ---
+        // 點擊與按鍵操作
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' || e.code === 'ArrowUp') {
+                e.preventDefault();
+                if (gameState === 'PLAYING') bird.flap();
+            }
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (gameState === 'PLAYING') bird.flap();
+        }, { passive: false });
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (gameState === 'PLAYING') bird.flap();
+        });
+
+        startBtn.addEventListener('click', startGame);
+        restartBtn.addEventListener('click', startGame);
+
+        // 初始化繪製首幀
+        loop();
+    </script>
+</body>
+</html>
